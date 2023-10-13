@@ -353,7 +353,7 @@ def main():
         st.write("https://www.mdpi.com/2073-8994/13/4/525")
         st.write('https://www.researchgate.net/publication/344069742_The_SPOTIS_Rank_Reversal_Free_Method_for_Multi-Criteria_Decision-Making_Support')
         st.write("To cite this work:")
-        st.write("Araujo, Tullio Mozart Pires de Castro; Junior, Célio Manso de Azeveodo; Gomes, Carlos Francisco Simões.; Santos, Marcos dos. MEREC-SPOTIS For Decision Making (v1), Universidade Federal Fluminense, Niterói, Rio de Janeiro, 2023.")
+        st.write("Araujo, Tullio Mozart Pires de Castro; Junior, Célio Manso de Azevedo; Gomes, Carlos Francisco Simões.; Santos, Marcos dos. MEREC-SPOTIS For Decision Making (v1), Universidade Federal Fluminense, Niterói, Rio de Janeiro, 2023.")
     
     # Add logo to the sidebar
     logo_path = "https://i.imgur.com/g7fITf4.png"  # Replace with the actual path to your logo image file
