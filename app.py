@@ -182,8 +182,8 @@ def get_criteria_ranges(num_criteria):
         st.write(f"Enter the range for Criterion {i+1}:")
 
         # Streamlit sliders to input min and max values
-        min_val = st.number_input(f'Min value for Criterion {i+1}', 0, 10000, 0)  # You can adjust the slider ranges as needed
-        max_val = st.number_input(f'Max value for Criterion {i+1}', 0, 10000, 1000)  # Initial value is just an example
+        min_val = st.number_input(f'Min value for Criterion {i+1}', min_value=0, max_value=None, value=None)  # You can adjust the slider ranges as needed
+        max_val = st.number_input(f'Max value for Criterion {i+1}', min_valu=0, max_value=None, value=None)  # Initial value is just an example
 
         criteria_ranges[f"C{i+1}"] = {"min": min_val, "max": max_val}
 
