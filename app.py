@@ -277,7 +277,7 @@ def sum_and_sort_rows(weighted_matrix):
     weighted_matrix['Total'] = weighted_matrix.iloc[:, 1:].sum(axis=1)
 
     # Sort the matrix based on the 'Total' column in descending order
-    sorted_matrix = weighted_matrix.sort_values(by='Total', ascending=False)
+    sorted_matrix = weighted_matrix.sort_values(by='Total', ascending=True)
     
     return sorted_matrix
 
