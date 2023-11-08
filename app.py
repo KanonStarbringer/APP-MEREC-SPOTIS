@@ -11,6 +11,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle
 import plotly.express as px
+import plotly.graph_objs as go
 
 # Set the app title and description
 st.set_page_config(
@@ -84,6 +85,37 @@ def calculate_performance(normalized_matrix):
 
     return S_i
 
+def calculate_performance_G(normalized_matrix):
+    """
+    Calculate the overall performance of the alternatives (Si) based on the MEREC method.
+
+    :param normalized_matrix: A 2D list representing the normalized decision matrix.
+    :return: A list representing the performance scores of the alternatives.
+    """
+
+    m = normalized_matrix.shape[1] - 1 # Subtracting 1 to exclude the 'A/C' column
+    
+    GM = []
+
+    for _, row in normalized_matrix.drop(columns='A/C').iterrows():
+        prod = np.prod(row)
+        prod_gm = np.power(prod, 1/m)
+        GM.append(prod_gm)
+
+    return GM
+
+def calculate_performance_H(normalized_matrix):
+    m = normalized_matrix.shape[1] - 1 
+    HI = []
+
+    for _, row in normalized_matrix.drop(columns='A/C').iterrows():
+        # Sum of the inverses of the normalized values for each alternative
+        sum_of_inverses = sum([1/nij if nij != 0 else 0 for nij in row])  # Check to avoid division by zero
+        Hi = m / sum_of_inverses if sum_of_inverses != 0 else 0
+        HI.append(Hi)
+
+    return HI
+
 def calculate_performance_without_criterion(normalized_matrix):
     """
     Calculate the performance of the alternatives by removing each criterion.
@@ -120,6 +152,66 @@ def calculate_performance_without_criterion(normalized_matrix):
     # Transpose the results to match the format shown in the image
     return pd.DataFrame(performances_without_criterion).transpose().values.tolist()
 
+def calculate_performance_without_criterion_geometric(normalized_matrix):
+    """
+    Calculate the performance of the alternatives by removing each criterion using the
+    geometric mean (MEREC-G method).
+
+    :param normalized_matrix: A DataFrame representing the normalized decision matrix.
+    :return: A 2D list where each inner list represents the performance scores of the alternatives
+             without considering a particular criterion.
+    """
+    
+    m = normalized_matrix.shape[1] - 1  # Subtracting 1 to exclude the 'A/C' column
+    
+    performances_without_criterion_geometric = []
+
+    for j in range(1, m+1):  # Starting from 1 to align with the actual data columns
+        performance_scores = []
+
+        for _, row in normalized_matrix.drop(columns='A/C').iterrows():
+            # Excluding the jth criterion
+            values_without_j = [value for idx, value in enumerate(row, 1) if idx != j]
+
+            # Calculate the geometric mean without the jth criterion
+            product_of_values = np.prod(values_without_j)
+            Si_j = np.power(product_of_values, 1/(m-1))
+            performance_scores.append(Si_j)
+
+        performances_without_criterion_geometric.append(performance_scores)
+
+    return pd.DataFrame(performances_without_criterion_geometric).transpose().values.tolist()
+
+def calculate_performance_without_criterion_harmonic(normalized_matrix):
+    """
+    Calculate the performance of the alternatives by removing each criterion using the
+    harmonic mean (MEREC-H method).
+
+    :param normalized_matrix: A DataFrame representing the normalized decision matrix.
+    :return: A 2D list where each inner list represents the performance scores of the alternatives
+             without considering a particular criterion.
+    """
+    
+    m = normalized_matrix.shape[1] - 1  # Subtracting 1 to exclude the 'A/C' column
+    
+    performances_without_criterion_harmonic = []
+
+    for j in range(1, m+1):  # Starting from 1 to align with the actual data columns
+        performance_scores = []
+
+        for _, row in normalized_matrix.drop(columns='A/C').iterrows():
+            # Excluding the jth criterion
+            values_without_j = [value for idx, value in enumerate(row, 1) if idx != j]
+
+            # Calculate the harmonic mean without the jth criterion
+            sum_of_inverses = sum([1/nik if nik != 0 else 0 for nik in values_without_j])
+            Si_j = (m-1) / sum_of_inverses if sum_of_inverses != 0 else 0
+            performance_scores.append(Si_j)
+
+        performances_without_criterion_harmonic.append(performance_scores)
+
+    return pd.DataFrame(performances_without_criterion_harmonic).transpose().values.tolist()
+
 def compute_removal_effect_for_criteria(Si, performances_without_criterion):
     """
     Compute the removal effect of each criterion.
@@ -144,6 +236,54 @@ def compute_removal_effect_for_criteria(Si, performances_without_criterion):
     
     return E_j
 
+def compute_removal_effect_for_criteria_G(GM, performances_without_criterion_geometric):
+    """
+    Compute the removal effect of each criterion.
+
+    :param Si: A list representing the overall performance scores of the alternatives.
+    :param performances_without_criterion: A 2D list where each inner list represents the performance scores of the alternatives without considering a particular criterion.
+    :return: A list representing the removal effect of each criterion.
+    """
+    
+    E_jG = []
+    
+    # Number of criteria
+    num_criteria_geometric = len(performances_without_criterion_geometric[0])
+    
+    # For each criterion j
+    for j in range(num_criteria_geometric):
+        summation_geometric = 0
+        # For each alternative i
+        for i in range(len(GM)):
+            summation_geometric += abs(performances_without_criterion_geometric[i][j] - GM[i])
+        E_jG.append(summation_geometric)
+    
+    return E_jG
+
+def compute_removal_effect_for_criteria_H(HI, performances_without_criterion_harmonic):
+    """
+    Compute the removal effect of each criterion.
+
+    :param Si: A list representing the overall performance scores of the alternatives.
+    :param performances_without_criterion: A 2D list where each inner list represents the performance scores of the alternatives without considering a particular criterion.
+    :return: A list representing the removal effect of each criterion.
+    """
+    
+    E_jH = []
+    
+    # Number of criteria
+    num_criteria_harmonic = len(performances_without_criterion_harmonic[0])
+    
+    # For each criterion j
+    for j in range(num_criteria_harmonic):
+        summation_harmonic = 0
+        # For each alternative i
+        for i in range(len(HI)):
+            summation_harmonic += abs(performances_without_criterion_harmonic[i][j] - HI[i])
+        E_jH.append(summation_harmonic)
+    
+    return E_jH
+
 def compute_criteria_weights(Ej_list):
     """
     Compute the final weights of the criteria based on their removal effects.
@@ -157,6 +297,20 @@ def compute_criteria_weights(Ej_list):
     
     
     return weights
+
+def compute_criteria_weights_G(EjG_list):
+    total_removal_effect_G = sum(EjG_list)
+    weights_G = [EjG / total_removal_effect_G for EjG in EjG_list]
+    
+    
+    return weights_G
+
+def compute_criteria_weights_H(EjH_list):
+    total_removal_effect_H = sum(EjH_list)
+    weights_H = [EjH / total_removal_effect_H for EjH in EjH_list]
+    
+    
+    return weights_H
 
 # def calculate_variables(weights):
 #     w_values = weights.values
@@ -182,8 +336,8 @@ def get_criteria_ranges(num_criteria):
         st.write(f"Enter the range for Criterion {i+1}:")
 
         # Streamlit sliders to input min and max values
-        min_val = st.number_input(f'Min value for Criterion {i+1}', min_value=0, max_value=None, value=None)  # You can adjust the slider ranges as needed
-        max_val = st.number_input(f'Max value for Criterion {i+1}', min_value=0, max_value=None, value=None)  # Initial value is just an example
+        min_val = st.number_input(f'Min value for Criterion {i+1}', 0, 10000, 0)  # You can adjust the slider ranges as needed
+        max_val = st.number_input(f'Max value for Criterion {i+1}', 0, 10000, 1000)  # Initial value is just an example
 
         criteria_ranges[f"C{i+1}"] = {"min": min_val, "max": max_val}
 
@@ -217,6 +371,40 @@ def plot_criteria_weights(weights):
 
     # Show the Plotly chart in Streamlit
     st.plotly_chart(fig)
+
+def plot_criteria_weights_all(weights, weights_G, weights_H):
+    """
+    Plot the criteria weights calculated by MEREC, MEREC-G, and MEREC-H methods.
+
+    :param criteria_labels: A list of criterion labels (e.g., ['C1', 'C2', 'C3']).
+    :param weights_merec: A list of weights from the MEREC method.
+    :param weights_merec_g: A list of weights from the MEREC-G method.
+    :param weights_merec_h: A list of weights from the MEREC-H method.
+    """
+    # Generate criteria labels based on the length of the weights list
+    num_criteria = len(weights)
+    criteria_labels = [f'C{i+1}' for i in range(num_criteria)]
+
+    # Create bar chart
+    fig = go.Figure(data=[
+        go.Bar(name='MEREC', x=criteria_labels, y=weights),
+        go.Bar(name='MEREC-G', x=criteria_labels, y=weights_G),
+        go.Bar(name='MEREC-H', x=criteria_labels, y=weights_H)
+    ])
+    
+    # Change the bar mode
+    fig.update_layout(barmode='group')
+    
+    # Update layout with title and axis labels
+    fig.update_layout(
+        title='Comparison of Criteria Weights by MEREC Methods',
+        xaxis_title='Criteria',
+        yaxis_title='Weights',
+        legend_title='Methods'
+    )
+    
+    st.plotly_chart(fig)
+
 
 def compute_ideal_solution(criterion_types, criteria_ranges):
     """
@@ -283,7 +471,7 @@ def sum_and_sort_rows(weighted_matrix):
 
 
 def main():
-    menu = ["Home","MEREC-SPOTIS", "About"]
+    menu = ["Home","MEREC, MEREC-G, MEREC-H","MEREC-SPOTIS", "About"]
 
     choice = st.sidebar.selectbox("Menu", menu)
 
@@ -295,6 +483,69 @@ def main():
         st.write("First, define how many alternatives and criteria you'll measure.")
         st.write("Then, define if the criteria are of benefit (more is better).")
         st.write("Or, if the criteria are of cost (if less is better).")
+
+    elif choice == "MEREC, MEREC-G, MEREC-H":
+        st.title("MEREC method complete")
+
+        payoff_matrix, criterion_types, _, num_criteria = get_payoff_matrix()
+        st.subheader("Payoff Matrix:")
+        st.dataframe(payoff_matrix)
+
+        normalized_matrix = normalize_matrix(payoff_matrix, criterion_types)
+        st.subheader("Normalized Matrix:")
+        st.dataframe(normalized_matrix)
+
+        Si_df = calculate_performance(normalized_matrix)
+        st.subheader("Calculated Performance:")
+        st.dataframe(Si_df) 
+
+        GM = calculate_performance_G(normalized_matrix)
+        st.subheader("Calculated performance MEREC G")
+        st.dataframe(GM)
+
+        HI = calculate_performance_H(normalized_matrix)
+        st.subheader("Calculate performance MEREC H")
+        st.dataframe(HI)
+
+        performance_without_criterion = calculate_performance_without_criterion(normalized_matrix)
+        st.subheader("Performance without Criterion:")
+        st.dataframe(performance_without_criterion)  
+
+        performance_without_criterion_G = calculate_performance_without_criterion_geometric(normalized_matrix)
+        st.subheader("Performance without criterion geometric")
+        st.dataframe(performance_without_criterion_G)
+
+        performance_without_criterion_H = calculate_performance_without_criterion_harmonic(normalized_matrix)
+        st.subheader("Performance without criterion harmonic")
+        st.dataframe(performance_without_criterion_H)
+
+        Ej_for_criteria = compute_removal_effect_for_criteria(Si_df, performance_without_criterion)
+        st.subheader("Removal Effect of Each Criterion (Ej):")
+        st.dataframe(Ej_for_criteria)        
+
+        Ej_for_criteria_G = compute_removal_effect_for_criteria_G(GM, performance_without_criterion_G)
+        st.subheader("Removal Effect of Each Criterion (Ej) geometric:")
+        st.dataframe(Ej_for_criteria_G)
+
+        Ej_for_criteria_H = compute_removal_effect_for_criteria_H(HI, performance_without_criterion_H)
+        st.subheader("Removel Effect of Each Criterion (Ej) harmonic:")
+        st.dataframe(Ej_for_criteria_H)
+
+        criteria_weights = compute_criteria_weights(Ej_for_criteria)
+        st.subheader("Final Weights of the Criteria:")
+        st.dataframe(criteria_weights) 
+
+        criteria_weights_G = compute_criteria_weights_G(Ej_for_criteria_G)
+        st.subheader("Final Weights of the Criteria G:")
+        st.dataframe(criteria_weights_G)
+
+        criteria_weights_H = compute_criteria_weights_H(Ej_for_criteria_H)
+        st.subheader("Final Weights of the Criteria H:")
+        st.dataframe(criteria_weights_H)
+
+        plot_criteria_weights_all(criteria_weights, criteria_weights_G, criteria_weights_H)
+
+
 
     elif choice == "MEREC-SPOTIS":
         st.title("MEREC-SPOTIS Method MCDA Calculator")
@@ -353,7 +604,7 @@ def main():
         st.write("https://www.mdpi.com/2073-8994/13/4/525")
         st.write('https://www.researchgate.net/publication/344069742_The_SPOTIS_Rank_Reversal_Free_Method_for_Multi-Criteria_Decision-Making_Support')
         st.write("To cite this work:")
-        st.write("Araujo, Tullio Mozart Pires de Castro; Junior, Célio Manso de Azevedo; Gomes, Carlos Francisco Simões.; Santos, Marcos dos. MEREC-SPOTIS For Decision Making (v1), Universidade Federal Fluminense, Niterói, Rio de Janeiro, 2023.")
+        st.write("Araujo, Tullio Mozart Pires de Castro; Junior, Célio Manso de Azeveodo; Gomes, Carlos Francisco Simões.; Santos, Marcos dos. MEREC-SPOTIS For Decision Making (v1), Universidade Federal Fluminense, Niterói, Rio de Janeiro, 2023.")
     
     # Add logo to the sidebar
     logo_path = "https://i.imgur.com/g7fITf4.png"  # Replace with the actual path to your logo image file
