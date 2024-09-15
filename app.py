@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import xlsxwriter
+import openpyxl
 import numpy as np
 from st_aggrid import AgGrid
 import io
@@ -16,14 +18,79 @@ import plotly.graph_objs as go
 # Set the app title and description
 st.set_page_config(
     page_title="MEREC-SPOTIS Calculator",
-    #page_icon=":chart_with_upwards_trend:",  # You can customize the icon
-    #layout="wide",  # You can set the layout (wide or center)
-    initial_sidebar_state="auto"  # You can set the initial sidebar state
+    initial_sidebar_state="auto"
 )
+# Function to download the Excel template
+def download_template():
+    # Adjust based on the number of alternatives and criteria
+    num_alternatives = 9  # You can set a default number or ask the user for input
+    num_criteria = 17  # Same for criteria
+
+    # Generate a list of alternative names
+    alternatives = [f'A{i+1}' for i in range(num_alternatives)]
+
+    # Create data for the template: "C1", "C2", ..., in the first row, and "Max/Min" in the second row
+    criteria_labels = [f'C{i+1}' for i in range(num_criteria)]
+    benefit_cost_row = ['Max' if i < 10 else 'Min' for i in range(num_criteria)]  # First 10 are Max, rest are Min
+
+    # Prepare data for the DataFrame
+    data = {f'C{i+1}': [''] * num_alternatives for i in range(num_criteria)}
+    df = pd.DataFrame(data)
+
+    # Set the first row for the "C1", "C2", ..., and second row for the "Max/Min"
+    df.loc[-2] = criteria_labels
+    df.loc[-1] = benefit_cost_row
+    df.index = df.index + 2  # Shifting the index to make space for the new rows
+    df = df.sort_index()
+
+    # Add the "A/C" column for alternatives
+    df.insert(0, 'A/C', ['A/C'] + [''] + alternatives)
+
+    # Convert the DataFrame to an Excel file
+    excel_buffer = io.BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, header=False)
+
+    # Provide a download link for the template
+    st.download_button(
+        label="Download Excel template",
+        data=excel_buffer,
+        file_name="MEREC_SPOTIS_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+# Function to read Excel file
+def read_excel(uploaded_file):
+    df = pd.read_excel(uploaded_file)
+
+    # Show the first two rows for debugging purposes
+    #st.write("First Row (Headers):")
+    #st.write(df.columns.tolist())
+    
+    #st.write("Second Row (Criterion Types):")
+    #st.write(df.iloc[0, 1:].tolist())
+
+    # Extract the "Max" or "Min" labels from the second row (the row defining if it's Benefit or Cost)
+    criterion_types = df.iloc[0, 1:].apply(lambda x: 'Benefit' if str(x).strip().lower() == 'max' else 'Cost').tolist()
+
+    # Remove the second row (the row with "Max" or "Min" labels) from the DataFrame
+    df = df.drop(0).reset_index(drop=True)
+
+    # Rename columns to C1, C2, etc. and keep the first column as 'A/C'
+    num_criteria = len(df.columns) - 1
+    columns = ['A/C'] + [f'C{i+1}' for i in range(num_criteria)]
+    df.columns = columns
+
+    # Convert all the criteria columns (except the 'A/C' column) to numeric values
+    for col in df.columns[1:]:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    return df, criterion_types, df.shape[0], num_criteria
+
+# Function to manually create the payoff matrix
 def get_payoff_matrix():
     num_alternatives = st.number_input("Enter the number of alternatives:", min_value=2, value=2, step=1, key="num_alternatives")
     num_criteria = st.number_input("Enter the number of criteria:", min_value=1, value=1, step=1, key="num_criteria")
-
 
     # Create a DataFrame to hold the payoff matrix
     columns = ['A/C'] + [f'C{i+1}' for i in range(num_criteria)]
@@ -47,20 +114,36 @@ def get_payoff_matrix():
         criterion_label = f"C{i+1}"
         criterion_type = st.selectbox(f"{criterion_label} - Benefit or Cost?", ["Benefit", "Cost"])
         criterion_types.append(criterion_type)
+    
+    # Print the criterion types for debugging
+    st.write("Criterion Types (Manual Input):", criterion_types)
 
     return edited_matrix, criterion_types, num_alternatives, num_criteria
 
-def normalize_matrix(matrix, criterion_types):
-    
+def normalize_matrix_manual(matrix, criterion_types):
     normalized_matrix = matrix.copy()
+
     for j, criterion_type in enumerate(criterion_types):
         if criterion_type == "Benefit":
             col_min = matrix.iloc[:, j+1].min()
-            normalized_matrix.iloc[:, j+1] = col_min / matrix.iloc[:, j+1]
-        else:
+            normalized_matrix.iloc[:, j+1] = col_min / matrix.iloc[:, j+1]  # Benefit normalization
+        else:  # Cost criterion
             col_max = matrix.iloc[:, j+1].max()
-            normalized_matrix.iloc[:, j+1] = matrix.iloc[:, j+1] / col_max
+            normalized_matrix.iloc[:, j+1] = matrix.iloc[:, j+1] / col_max  # Cost normalization
+    
+    return normalized_matrix
 
+def normalize_matrix_excel(matrix, criterion_types_from_excel):
+    normalized_matrix = matrix.copy()
+
+    for j, criterion_type in enumerate(criterion_types_from_excel):
+        if criterion_type == "Benefit":
+            col_min = matrix.iloc[:, j+1].min()
+            normalized_matrix.iloc[:, j+1] = col_min / matrix.iloc[:, j+1]  # Benefit normalization
+        else:  # Cost criterion
+            col_max = matrix.iloc[:, j+1].max()
+            normalized_matrix.iloc[:, j+1] = matrix.iloc[:, j+1] / col_max  # Cost normalization
+    
     return normalized_matrix
 
 def calculate_performance(normalized_matrix):
@@ -336,8 +419,8 @@ def get_criteria_ranges(num_criteria):
         st.write(f"Enter the range for Criterion {i+1}:")
 
         # Streamlit sliders to input min and max values
-        min_val = st.number_input(f'Min value for Criterion {i+1}', 0, 10000, 0)  # You can adjust the slider ranges as needed
-        max_val = st.number_input(f'Max value for Criterion {i+1}', 0, 10000, 1000)  # Initial value is just an example
+        min_val = st.number_input(f'Min value for Criterion {i+1}', 0, 50000, 0)  # You can adjust the slider ranges as needed
+        max_val = st.number_input(f'Max value for Criterion {i+1}', 0, 50000, 1000)  # Initial value is just an example
 
         criteria_ranges[f"C{i+1}"] = {"min": min_val, "max": max_val}
 
@@ -469,133 +552,247 @@ def sum_and_sort_rows(weighted_matrix):
     
     return sorted_matrix
 
-
+# Main function
 def main():
-    menu = ["Home","MEREC, MEREC-G, MEREC-H","MEREC-SPOTIS", "About"]
-
+    menu = ["Home", "MEREC Methods Comparison (MEREC, MEREC-G, MEREC-H)", "MEREC-SPOTIS", "About"]
     choice = st.sidebar.selectbox("Menu", menu)
 
     if choice == "Home":
         st.header("Home")
-        st.subheader("MEREC-SPOTIS Calculator")
-        st.write("This is a MCDA Calculator for the MEREC-SPOTIS Method")
-        st.write("To use this Calculator, is quite intuitive:")
-        st.write("First, define how many alternatives and criteria you'll measure.")
-        st.write("Then, define if the criteria are of benefit (more is better).")
-        st.write("Or, if the criteria are of cost (if less is better).")
+        st.subheader("Welcome to the MEREC-SPOTIS Calculator!")
+        st.write("This is an MCDA Calculator for the MEREC-SPOTIS method and related methods.")
+        st.write("Please use the side menu to select a method.")
+        st.write("1. MEREC Methods Comparison: Calculate and compare the weights using MEREC, MEREC-G, and MEREC-H.")
+        st.write("2. MEREC-SPOTIS: Apply the SPOTIS method with MEREC-derived weights.")
 
-    elif choice == "MEREC, MEREC-G, MEREC-H":
-        st.title("MEREC method complete")
+    elif choice == "MEREC Methods Comparison (MEREC, MEREC-G, MEREC-H)":
+        st.title("MEREC Methods Comparison (MEREC, MEREC-G, MEREC-H)")
 
-        payoff_matrix, criterion_types, _, num_criteria = get_payoff_matrix()
-        st.subheader("Payoff Matrix:")
-        st.dataframe(payoff_matrix)
+        data_input_method = st.selectbox("Select Data Input Method:", ["Manual Input", "Upload Excel"])
 
-        normalized_matrix = normalize_matrix(payoff_matrix, criterion_types)
-        st.subheader("Normalized Matrix:")
-        st.dataframe(normalized_matrix)
+        # Handle data input: either manually or via Excel
+        if data_input_method == "Upload Excel":
+            st.write("Download the template to fill out the data:")
+            download_template()
+            uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
 
-        Si_df = calculate_performance(normalized_matrix)
-        st.subheader("Calculated Performance:")
-        st.dataframe(Si_df) 
+            if uploaded_file:
+                payoff_matrix, criterion_types, num_alternatives, num_criteria = read_excel(uploaded_file)
+                st.subheader("Payoff Matrix from Uploaded Excel:")
+                st.dataframe(payoff_matrix)
 
-        GM = calculate_performance_G(normalized_matrix)
-        st.subheader("Calculated performance MEREC G")
-        st.dataframe(GM)
+        elif data_input_method == "Manual Input":
+            payoff_matrix, criterion_types, num_alternatives, num_criteria = get_payoff_matrix()
+            st.subheader("Payoff Matrix:")
+            st.dataframe(payoff_matrix)
 
-        HI = calculate_performance_H(normalized_matrix)
-        st.subheader("Calculate performance MEREC H")
-        st.dataframe(HI)
+        if 'payoff_matrix' in locals():
+            normalized_matrix = normalize_matrix_excel(payoff_matrix, criterion_types) if data_input_method == "Upload Excel" else normalize_matrix_manual(payoff_matrix, criterion_types)
+            st.subheader("Normalized Matrix:")
+            st.dataframe(normalized_matrix)
 
-        performance_without_criterion = calculate_performance_without_criterion(normalized_matrix)
-        st.subheader("Performance without Criterion:")
-        st.dataframe(performance_without_criterion)  
+            # MEREC calculations
+            try:
+                Si_df = calculate_performance(normalized_matrix)
+                st.subheader("Calculated Performance (MEREC):")
+                st.dataframe(pd.DataFrame(Si_df).T)
 
-        performance_without_criterion_G = calculate_performance_without_criterion_geometric(normalized_matrix)
-        st.subheader("Performance without criterion geometric")
-        st.dataframe(performance_without_criterion_G)
+                performance_without_criterion = calculate_performance_without_criterion(normalized_matrix)
+                st.subheader("Performance without Criterion (MEREC):")
+                st.dataframe(pd.DataFrame(performance_without_criterion).T)
 
-        performance_without_criterion_H = calculate_performance_without_criterion_harmonic(normalized_matrix)
-        st.subheader("Performance without criterion harmonic")
-        st.dataframe(performance_without_criterion_H)
+                Ej_for_criteria = compute_removal_effect_for_criteria(Si_df, performance_without_criterion)
+                st.subheader("Removal Effect of Each Criterion (MEREC):")
+                st.dataframe(pd.DataFrame(Ej_for_criteria).T)
 
-        Ej_for_criteria = compute_removal_effect_for_criteria(Si_df, performance_without_criterion)
-        st.subheader("Removal Effect of Each Criterion (Ej):")
-        st.dataframe(Ej_for_criteria)        
+                criteria_weights_merec = compute_criteria_weights(Ej_for_criteria)
+                st.subheader("Final Weights of the Criteria (MEREC):")
+                st.dataframe(pd.DataFrame(criteria_weights_merec).T)
 
-        Ej_for_criteria_G = compute_removal_effect_for_criteria_G(GM, performance_without_criterion_G)
-        st.subheader("Removal Effect of Each Criterion (Ej) geometric:")
-        st.dataframe(Ej_for_criteria_G)
+            except Exception as e:
+                st.error(f"Error in MEREC calculations: {e}")
 
-        Ej_for_criteria_H = compute_removal_effect_for_criteria_H(HI, performance_without_criterion_H)
-        st.subheader("Removel Effect of Each Criterion (Ej) harmonic:")
-        st.dataframe(Ej_for_criteria_H)
+            # MEREC-G calculations
+            try:
+                GM_df = calculate_performance_G(normalized_matrix)
+                st.subheader("Calculated Performance (MEREC-G):")
+                st.dataframe(pd.DataFrame(GM_df).T)
 
-        criteria_weights = compute_criteria_weights(Ej_for_criteria)
-        st.subheader("Final Weights of the Criteria:")
-        st.dataframe(criteria_weights) 
+                performance_without_criterion_G = calculate_performance_without_criterion_geometric(normalized_matrix)
+                st.subheader("Performance without Criterion (MEREC-G):")
+                st.dataframe(pd.DataFrame(performance_without_criterion_G).T)
 
-        criteria_weights_G = compute_criteria_weights_G(Ej_for_criteria_G)
-        st.subheader("Final Weights of the Criteria G:")
-        st.dataframe(criteria_weights_G)
+                Ej_for_criteria_G = compute_removal_effect_for_criteria_G(GM_df, performance_without_criterion_G)
+                st.subheader("Removal Effect of Each Criterion (MEREC-G):")
+                st.dataframe(pd.DataFrame(Ej_for_criteria_G).T)
 
-        criteria_weights_H = compute_criteria_weights_H(Ej_for_criteria_H)
-        st.subheader("Final Weights of the Criteria H:")
-        st.dataframe(criteria_weights_H)
+                criteria_weights_g = compute_criteria_weights_G(Ej_for_criteria_G)
+                st.subheader("Final Weights of the Criteria (MEREC-G):")
+                st.dataframe(pd.DataFrame(criteria_weights_g).T)
 
-        plot_criteria_weights_all(criteria_weights, criteria_weights_G, criteria_weights_H)
+            except Exception as e:
+                st.error(f"Error in MEREC-G calculations: {e}")
 
+            # MEREC-H calculations
+            try:
+                HI_df = calculate_performance_H(normalized_matrix)
+                st.subheader("Calculated Performance (MEREC-H):")
+                st.dataframe(pd.DataFrame(HI_df).T)
 
+                performance_without_criterion_H = calculate_performance_without_criterion_harmonic(normalized_matrix)
+                st.subheader("Performance without Criterion (MEREC-H):")
+                st.dataframe(pd.DataFrame(performance_without_criterion_H).T)
+
+                Ej_for_criteria_H = compute_removal_effect_for_criteria_H(HI_df, performance_without_criterion_H)
+                st.subheader("Removal Effect of Each Criterion (MEREC-H):")
+                st.dataframe(pd.DataFrame(Ej_for_criteria_H).T)
+
+                criteria_weights_h = compute_criteria_weights_H(Ej_for_criteria_H)
+                st.subheader("Final Weights of the Criteria (MEREC-H):")
+                st.dataframe(pd.DataFrame(criteria_weights_h).T)
+
+            except Exception as e:
+                st.error(f"Error in MEREC-H calculations: {e}")
+
+            # Plot comparison of weights for MEREC, MEREC-G, and MEREC-H
+            plot_criteria_weights_all(criteria_weights_merec, criteria_weights_g, criteria_weights_h)
 
     elif choice == "MEREC-SPOTIS":
         st.title("MEREC-SPOTIS Method MCDA Calculator")
 
-        payoff_matrix, criterion_types, _, num_criteria = get_payoff_matrix()
-        st.subheader("Payoff Matrix:")
-        st.dataframe(payoff_matrix)
+        # Input data via Excel or Manual
+        data_input_method = st.selectbox("Select Data Input Method:", ["Manual Input", "Upload Excel"])
 
-        normalized_matrix = normalize_matrix(payoff_matrix, criterion_types)
-        st.subheader("Normalized Matrix:")
-        st.dataframe(normalized_matrix)
+        if data_input_method == "Upload Excel":
+            st.write("Download the template to fill out the data:")
+            download_template()
+            uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
 
-        Si_df = calculate_performance(normalized_matrix)
-        st.subheader("Calculated Performance:")
-        st.dataframe(Si_df)
+            if uploaded_file:
+                payoff_matrix, criterion_types, num_alternatives, num_criteria = read_excel(uploaded_file)
+                st.subheader("Payoff Matrix from Uploaded Excel:")
+                st.dataframe(payoff_matrix)
 
-        performance_without_criterion = calculate_performance_without_criterion(normalized_matrix)
-        st.subheader("Performance without Criterion:")
-        st.dataframe(performance_without_criterion)
+        elif data_input_method == "Manual Input":
+            payoff_matrix, criterion_types, num_alternatives, num_criteria = get_payoff_matrix()
+            st.subheader("Payoff Matrix:")
+            st.dataframe(payoff_matrix)
 
-        Ej_for_criteria = compute_removal_effect_for_criteria(Si_df, performance_without_criterion)
-        st.subheader("Removal Effect of Each Criterion (Ej):")
-        st.dataframe(Ej_for_criteria)
+        if 'payoff_matrix' in locals():
+            criteria_ranges = get_criteria_ranges(num_criteria)
+            st.subheader("Criteria Ranges:")
+            st.dataframe(criteria_ranges)
 
-        criteria_weights = compute_criteria_weights(Ej_for_criteria)
-        st.subheader("Final Weights of the Criteria:")
-        st.dataframe(criteria_weights)
+            ideal_solution = compute_ideal_solution(criterion_types, criteria_ranges)
+            st.subheader("Ideal Solution:")
+            st.dataframe(pd.DataFrame(ideal_solution).T)
 
-        plot_criteria_weights(criteria_weights)
+            weight_method = st.selectbox("Select Criteria Weights Method:", ["Manual", "MEREC", "MEREC-G", "MEREC-H"])
 
-        criteria_ranges = get_criteria_ranges(num_criteria)
-        st.subheader("Criteria Ranges:")
-        st.dataframe(criteria_ranges) 
+            # Initialize criteria_weights to None
+            criteria_weights = None
 
-        ideal_solution = compute_ideal_solution(criterion_types, criteria_ranges)
-        st.subheader("Ideal Solution:")
-        st.dataframe(ideal_solution)
+            if weight_method == "Manual":
+                criteria_weights = []
+                for i in range(num_criteria):
+                    weight = st.number_input(f'Weight for Criterion {i+1}', min_value=0.0, max_value=1.0, value=0.0)
+                    criteria_weights.append(weight)
+                criteria_weights = [weight / sum(criteria_weights) for weight in criteria_weights]
 
-        normalized_spotis = normalize_spotis(payoff_matrix, ideal_solution, criteria_ranges, criterion_types)
-        st.subheader("Normalized Matrix:")
-        st.dataframe(normalized_spotis)
+            elif weight_method == "MEREC":
+                try:
+                    normalized_matrix = normalize_matrix_excel(payoff_matrix, criterion_types) if data_input_method == "Upload Excel" else normalize_matrix_manual(payoff_matrix, criterion_types)
+                    st.subheader("Normalized Matrix:")
+                    st.dataframe(normalized_matrix)
 
-        weighted_spotis = apply_weights(normalized_spotis, criteria_weights)
-        st.subheader("Final Spotis Matrix:")
-        st.dataframe(weighted_spotis)
+                    Si_df = calculate_performance(normalized_matrix)
+                    st.subheader("Calculated Performance (MEREC):")
+                    st.dataframe(pd.DataFrame(Si_df).T)
 
-        sorted_spotis = sum_and_sort_rows(weighted_spotis)
-        st.subheader("Sorted Spotis Matrix:")
-        st.dataframe(sorted_spotis)
+                    performance_without_criterion = calculate_performance_without_criterion(normalized_matrix)
+                    st.subheader("Performance without Criterion (MEREC):")
+                    st.dataframe(pd.DataFrame(performance_without_criterion).T)
 
+                    Ej_for_criteria = compute_removal_effect_for_criteria(Si_df, performance_without_criterion)
+                    st.subheader("Removal Effect of Each Criterion (MEREC):")
+                    st.dataframe(pd.DataFrame(Ej_for_criteria).T)
+
+                    criteria_weights = compute_criteria_weights(Ej_for_criteria)
+                    st.subheader("Final Weights of the Criteria (MEREC):")
+                    st.dataframe(pd.DataFrame(criteria_weights).T)
+
+                except Exception as e:
+                    st.error(f"Error calculating MEREC: {e}")
+
+            elif weight_method == "MEREC-G":
+                try:
+                    normalized_matrix = normalize_matrix_excel(payoff_matrix, criterion_types) if data_input_method == "Upload Excel" else normalize_matrix_manual(payoff_matrix, criterion_types)
+                    st.subheader("Normalized Matrix:")
+                    st.dataframe(normalized_matrix)
+
+                    GM_df = calculate_performance_G(normalized_matrix)
+                    st.subheader("Calculated Performance (MEREC-G):")
+                    st.dataframe(pd.DataFrame(GM_df).T)
+
+                    performance_without_criterion_G = calculate_performance_without_criterion_geometric(normalized_matrix)
+                    st.subheader("Performance without Criterion (MEREC-G):")
+                    st.dataframe(pd.DataFrame(performance_without_criterion_G).T)
+
+                    Ej_for_criteria_G = compute_removal_effect_for_criteria_G(GM_df, performance_without_criterion_G)
+                    st.subheader("Removal Effect of Each Criterion (MEREC-G):")
+                    st.dataframe(pd.DataFrame(Ej_for_criteria_G).T)
+
+                    criteria_weights = compute_criteria_weights_G(Ej_for_criteria_G)
+                    st.subheader("Final Weights of the Criteria (MEREC-G):")
+                    st.dataframe(pd.DataFrame(criteria_weights).T)
+
+                except Exception as e:
+                    st.error(f"Error calculating MEREC-G: {e}")
+
+            elif weight_method == "MEREC-H":
+                try:
+                    normalized_matrix = normalize_matrix_excel(payoff_matrix, criterion_types) if data_input_method == "Upload Excel" else normalize_matrix_manual(payoff_matrix, criterion_types)
+                    st.subheader("Normalized Matrix:")
+                    st.dataframe(normalized_matrix)
+
+                    HI_df = calculate_performance_H(normalized_matrix)
+                    st.subheader("Calculated Performance (MEREC-H):")
+                    st.dataframe(pd.DataFrame(HI_df).T)
+
+                    performance_without_criterion_H = calculate_performance_without_criterion_harmonic(normalized_matrix)
+                    st.subheader("Performance without Criterion (MEREC-H):")
+                    st.dataframe(pd.DataFrame(performance_without_criterion_H).T)
+
+                    Ej_for_criteria_H = compute_removal_effect_for_criteria_H(HI_df, performance_without_criterion_H)
+                    st.subheader("Removal Effect of Each Criterion (MEREC-H):")
+                    st.dataframe(pd.DataFrame(Ej_for_criteria_H).T)
+
+                    criteria_weights = compute_criteria_weights_H(Ej_for_criteria_H)
+                    st.subheader("Final Weights of the Criteria (MEREC-H):")
+                    st.dataframe(pd.DataFrame(criteria_weights).T)
+
+                except Exception as e:
+                    st.error(f"Error calculating MEREC-H: {e}")
+
+            # Check if criteria_weights are calculated before using them
+            if criteria_weights is None:
+                st.error("Criteria weights have not been calculated. Please select a valid weighting method.")
+            else:
+                # Proceed with SPOTIS calculations using criteria_weights
+                try:
+                    normalized_spotis = normalize_spotis(payoff_matrix, ideal_solution, criteria_ranges, criterion_types)
+                    st.subheader("Normalized SPOTIS Matrix:")
+                    st.dataframe(normalized_spotis)
+
+                    weighted_spotis = apply_weights(normalized_spotis, criteria_weights)
+                    st.subheader("Final Spotis Matrix:")
+                    st.dataframe(weighted_spotis)
+
+                    sorted_spotis = sum_and_sort_rows(weighted_spotis)
+                    st.subheader("Sorted Spotis Matrix:")
+                    st.dataframe(sorted_spotis)
+                except Exception as e:
+                    st.error(f"Error calculating SPOTIS: {e}")
     else:
         st.subheader("About")
         st.write("The MEREC Method is a method created by Ghorabee et al. [2021]")
@@ -609,7 +806,6 @@ def main():
     # Add logo to the sidebar
     logo_path = "https://i.imgur.com/g7fITf4.png"  # Replace with the actual path to your logo image file
     st.sidebar.image(logo_path, use_column_width=True)
-
 
 if __name__ == "__main__":
     main()
