@@ -529,6 +529,7 @@ def normalize_spotis(matrix, ideal_solution, criteria_ranges, criterion_types):
             s_j_min = float(criteria_ranges[f"C{j+1}"]["min"])
             dif = float(abs(s_ij-s_j_star))
 
+            
             normalized_value = (dif - s_j_min) / (s_j_max - s_j_min)
             
             normalized_spotis.iloc[i, j+1] = normalized_value
