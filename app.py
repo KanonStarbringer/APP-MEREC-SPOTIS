@@ -419,8 +419,8 @@ def get_criteria_ranges(num_criteria):
         st.write(f"Enter the range for Criterion {i+1}:")
 
         # Streamlit sliders to input min and max values
-        min_val = st.number_input(f'Min value for Criterion {i+1}', 0, 50000, 0)  # You can adjust the slider ranges as needed
-        max_val = st.number_input(f'Max value for Criterion {i+1}', 0, 50000, 1000)  # Initial value is just an example
+        min_val = st.number_input(f'Min value for Criterion {i+1}', min_value=None, max_value=None, step=None)  # You can adjust the slider ranges as needed
+        max_val = st.number_input(f'Max value for Criterion {i+1}', min_value=None, max_value=None, step=None)  # Initial value is just an example
 
         criteria_ranges[f"C{i+1}"] = {"min": min_val, "max": max_val}
 
@@ -808,7 +808,7 @@ def main():
     
     # Add logo to the sidebar
     logo_path = "https://i.imgur.com/g7fITf4.png"  # Replace with the actual path to your logo image file
-    st.sidebar.image(logo_path, use_column_width=True)
+    st.sidebar.image(logo_path, use_container_width=True)
 
 if __name__ == "__main__":
     main()
